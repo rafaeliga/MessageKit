@@ -1,7 +1,7 @@
 /*
  MIT License
 
- Copyright (c) 2017-2019 MessageKit
+ Copyright (c) 2017-2018 MessageKit
 
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +23,7 @@
  */
 
 import Foundation
-import InputBarAccessoryView
+import MessageInputBar
 
 extension MessagesViewController {
 
@@ -56,7 +56,7 @@ extension MessagesViewController {
         guard !isMessagesControllerBeingDismissed else { return }
 
         guard let keyboardStartFrameInScreenCoords = notification.userInfo?[UIResponder.keyboardFrameBeginUserInfoKey] as? CGRect else { return }
-        guard !keyboardStartFrameInScreenCoords.isEmpty || UIDevice.current.userInterfaceIdiom != .pad else {
+        guard !keyboardStartFrameInScreenCoords.isEmpty else {
             // WORKAROUND for what seems to be a bug in iPad's keyboard handling in iOS 11: we receive an extra spurious frame change
             // notification when undocking the keyboard, with a zero starting frame and an incorrect end frame. The workaround is to
             // ignore this notification.

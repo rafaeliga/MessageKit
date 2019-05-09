@@ -1,7 +1,7 @@
 /*
  MIT License
 
- Copyright (c) 2017-2019 MessageKit
+ Copyright (c) 2017-2018 MessageKit
 
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated documentation files (the "Software"), to deal
@@ -62,18 +62,6 @@ open class MessagesCollectionViewFlowLayout: UICollectionViewFlowLayout {
         return collectionView.frame.width - sectionInset.left - sectionInset.right
     }
 
-    open override var collectionViewContentSize: CGSize {
-        let size = super.collectionViewContentSize
-
-        guard !isTypingIndicatorViewHidden, let delegate = messagesCollectionView.messagesLayoutDelegate else { return size }
-        let typingIndicatorSize = delegate.typingIndicatorViewSize(in: messagesCollectionView)
-        let inset = delegate.typingIndicatorViewTopInset(in: messagesCollectionView) + 5
-        return CGSize(
-            width: size.width,
-            height: size.height + typingIndicatorSize.height + inset
-        )
-    }
-
     public private(set) var isTypingIndicatorViewHidden: Bool = true
 
     // MARK: - Initializers
@@ -117,26 +105,23 @@ open class MessagesCollectionViewFlowLayout: UICollectionViewFlowLayout {
     ///   - completion: A completion block to execute after the insertion/deletion
     open func setTypingIndicatorViewHidden(_ isHidden: Bool, animated: Bool, whilePerforming updates: (() -> Void)? = nil, completion: ((Bool) -> Void)? = nil) {
 
-        guard isTypingIndicatorViewHidden != isHidden, messagesCollectionView.numberOfSections > 0 else {
-            completion?(false)
-            return
-        }
+        guard isTypingIndicatorViewHidden != isHidden else { return }
         isTypingIndicatorViewHidden = isHidden
-
-        let ctx = UICollectionViewFlowLayoutInvalidationContext()
-        ctx.invalidateSupplementaryElements(
-            ofKind: MessagesCollectionView.elementKindTypingIndicator,
-            at: [indexPathForTypingIndicatorView()]
-        )
 
         if animated {
             messagesCollectionView.performBatchUpdates({ [weak self] in
-                self?.invalidateLayout(with: ctx)
+                self?.invalidateLayout()
                 updates?()
-            }, completion: completion)
+                }, completion: { [weak self] success in
+                    if success {
+                        self?.adjustBottomInsetForTypingIndicatorView()
+                    }
+                    completion?(success)
+            })
         } else {
-            invalidateLayout(with: ctx)
             updates?()
+            invalidateLayout()
+            adjustBottomInsetForTypingIndicatorView()
             completion?(true)
         }
     }
@@ -191,8 +176,9 @@ open class MessagesCollectionViewFlowLayout: UICollectionViewFlowLayout {
             if let itemAttributes = layoutAttributesForItem(at: indexPath) {
                 attributes.frame = CGRect(x: itemAttributes.frame.origin.x,
                                           y: itemAttributes.frame.maxY + inset,
-                                          width: size.width,
+                                          width:  size.width,
                                           height: size.height)
+                attributes.zIndex = 1
             }
             return attributes
         default:
@@ -201,14 +187,8 @@ open class MessagesCollectionViewFlowLayout: UICollectionViewFlowLayout {
     }
 
     public func shouldDisplayTypingIndicatorView(at indexPath: IndexPath) -> Bool {
-        guard !indexPath.isEmpty else { return false }
         let isLastIndexPath = indexPath.section == messagesCollectionView.numberOfSections - 1
         return isLastIndexPath && !isTypingIndicatorViewHidden
-    }
-
-    private func indexPathForTypingIndicatorView() -> IndexPath {
-        let section = messagesCollectionView.numberOfSections - 2
-        return IndexPath(item: 0, section: max(section, 0))
     }
 
     // MARK: - Layout Invalidation
@@ -229,20 +209,6 @@ open class MessagesCollectionViewFlowLayout: UICollectionViewFlowLayout {
         invalidateLayout()
     }
 
-    open override func indexPathsToInsertForSupplementaryView(ofKind elementKind: String) -> [IndexPath] {
-        guard elementKind == MessagesCollectionView.elementKindTypingIndicator else {
-            return super.indexPathsToInsertForSupplementaryView(ofKind: elementKind)
-        }
-        return [indexPathForTypingIndicatorView()]
-    }
-
-    open override func indexPathsToDeleteForSupplementaryView(ofKind elementKind: String) -> [IndexPath] {
-        guard elementKind == MessagesCollectionView.elementKindTypingIndicator else {
-            return super.indexPathsToDeleteForSupplementaryView(ofKind: elementKind)
-        }
-        return [indexPathForTypingIndicatorView()]
-    }
-
     // MARK: - Cell Sizing
 
     lazy open var textMessageSizeCalculator = TextMessageSizeCalculator(layout: self)
@@ -255,7 +221,6 @@ open class MessagesCollectionViewFlowLayout: UICollectionViewFlowLayout {
     lazy open var photoMessageSizeCalculator = MediaMessageSizeCalculator(layout: self)
     lazy open var videoMessageSizeCalculator = MediaMessageSizeCalculator(layout: self)
     lazy open var locationMessageSizeCalculator = LocationMessageSizeCalculator(layout: self)
-    lazy open var audioMessageSizeCalculator = AudioMessageSizeCalculator(layout: self)
 
     /// - Note:
     ///   If you override this method, remember to call MessageLayoutDelegate's customCellSizeCalculator(for:at:in:) method for MessageKind.custom messages, if necessary
@@ -274,8 +239,6 @@ open class MessagesCollectionViewFlowLayout: UICollectionViewFlowLayout {
             return videoMessageSizeCalculator
         case .location:
             return locationMessageSizeCalculator
-        case .audio:
-            return audioMessageSizeCalculator
         case .custom:
             return messagesLayoutDelegate.customCellSizeCalculator(for: message, at: indexPath, in: messagesCollectionView)
         }
@@ -305,11 +268,6 @@ open class MessagesCollectionViewFlowLayout: UICollectionViewFlowLayout {
     public func setMessageOutgoingAvatarPosition(_ newPosition: AvatarPosition) {
         messageSizeCalculators().forEach { $0.outgoingAvatarPosition = newPosition }
     }
-
-    /// Set `avatarLeadingTrailingPadding` of all `MessageSizeCalculator`s
-    public func setAvatarLeadingTrailingPadding(_ newPadding: CGFloat) {
-        messageSizeCalculators().forEach { $0.avatarLeadingTrailingPadding = newPadding }
-    }
     
     /// Set `incomingMessagePadding` of all `MessageSizeCalculator`s
     public func setMessageIncomingMessagePadding(_ newPadding: UIEdgeInsets) {
@@ -329,16 +287,6 @@ open class MessagesCollectionViewFlowLayout: UICollectionViewFlowLayout {
     /// Set `outgoingCellTopLabelAlignment` of all `MessageSizeCalculator`s
     public func setMessageOutgoingCellTopLabelAlignment(_ newAlignment: LabelAlignment) {
         messageSizeCalculators().forEach { $0.outgoingCellTopLabelAlignment = newAlignment }
-    }
-    
-    /// Set `incomingCellBottomLabelAlignment` of all `MessageSizeCalculator`s
-    public func setMessageIncomingCellBottomLabelAlignment(_ newAlignment: LabelAlignment) {
-        messageSizeCalculators().forEach { $0.incomingCellBottomLabelAlignment = newAlignment }
-    }
-    
-    /// Set `outgoingCellBottomLabelAlignment` of all `MessageSizeCalculator`s
-    public func setMessageOutgoingCellBottomLabelAlignment(_ newAlignment: LabelAlignment) {
-        messageSizeCalculators().forEach { $0.outgoingCellBottomLabelAlignment = newAlignment }
     }
     
     /// Set `incomingMessageTopLabelAlignment` of all `MessageSizeCalculator`s
@@ -366,41 +314,24 @@ open class MessagesCollectionViewFlowLayout: UICollectionViewFlowLayout {
         messageSizeCalculators().forEach { $0.incomingAccessoryViewSize = newSize }
     }
 
-    /// Set `outgoingAccessoryViewSize` of all `MessageSizeCalculator`s
+    /// Set `outgoingAvatarSize` of all `MessageSizeCalculator`s
     public func setMessageOutgoingAccessoryViewSize(_ newSize: CGSize) {
         messageSizeCalculators().forEach { $0.outgoingAccessoryViewSize = newSize }
     }
 
-    /// Set `incomingAccessoryViewPadding` of all `MessageSizeCalculator`s
+    /// Set `incomingAccessoryViewSize` of all `MessageSizeCalculator`s
     public func setMessageIncomingAccessoryViewPadding(_ newPadding: HorizontalEdgeInsets) {
         messageSizeCalculators().forEach { $0.incomingAccessoryViewPadding = newPadding }
     }
 
-    /// Set `outgoingAccessoryViewPadding` of all `MessageSizeCalculator`s
+    /// Set `outgoingAvatarSize` of all `MessageSizeCalculator`s
     public func setMessageOutgoingAccessoryViewPadding(_ newPadding: HorizontalEdgeInsets) {
         messageSizeCalculators().forEach { $0.outgoingAccessoryViewPadding = newPadding }
-    }
-    
-    /// Set `incomingAccessoryViewPosition` of all `MessageSizeCalculator`s
-    public func setMessageIncomingAccessoryViewPosition(_ newPosition: AccessoryPosition) {
-        messageSizeCalculators().forEach { $0.incomingAccessoryViewPosition = newPosition }
-    }
-    
-    /// Set `outgoingAccessoryViewPosition` of all `MessageSizeCalculator`s
-    public func setMessageOutgoingAccessoryViewPosition(_ newPosition: AccessoryPosition) {
-        messageSizeCalculators().forEach { $0.outgoingAccessoryViewPosition = newPosition }
     }
 
     /// Get all `MessageSizeCalculator`s
     open func messageSizeCalculators() -> [MessageSizeCalculator] {
-        return [textMessageSizeCalculator,
-                attributedTextMessageSizeCalculator,
-                emojiMessageSizeCalculator,
-                photoMessageSizeCalculator,
-                videoMessageSizeCalculator,
-                locationMessageSizeCalculator,
-                audioMessageSizeCalculator
-        ]
+        return [textMessageSizeCalculator, attributedTextMessageSizeCalculator, emojiMessageSizeCalculator, photoMessageSizeCalculator, videoMessageSizeCalculator, locationMessageSizeCalculator]
     }
     
 }
